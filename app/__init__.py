@@ -1,40 +1,54 @@
-from dotenv import load_dotenv
+import os
 from flask import Flask, jsonify
-import peewee
-import psycopg2
-
-from app.database import init_db
-from app.routes import register_routes
+from dotenv import load_dotenv
+from peewee import OperationalError, DatabaseError
+from app.database import db
 
 
-def create_app(test_config=None):
-    load_dotenv()
-
+def create_app(config=None):
+    load_dotenv()  # Load environment variables from .env
     app = Flask(__name__)
 
-    if test_config:
-        app.config.from_mapping(test_config)
+    if config:
+        app.config.update(config)
 
+    from app.database import init_db
     init_db(app)
 
-    @app.errorhandler(peewee.OperationalError)
-    @app.errorhandler(psycopg2.OperationalError)
-    def handle_database_connection_error(e):
-        """Custom handler for database connection crashes."""
-        return jsonify({
-            "status": "error",
-            "message": "The system is currently experiencing a connection issue with the database.",
-            "details": "We have detected a PostgreSQL service failure. Our automated reliability protocols have been triggered.",
-            "type": "DATABASE_CRASH",
-            "recommendation": "Try again in 30 seconds as the service auto-recovers."
-        }), 503
+    from app.models import User, Url, Event  
+    with app.app_context():
+        from app.database import db
+        db.create_tables([User, Url, Event], safe=True)
 
-    from app import models  # noqa: F401 - registers models with Peewee
-
+    from app.routes import register_routes
     register_routes(app)
 
-    @app.route("/health")
-    def health():
-        return jsonify(status="ok")
+    # ── global error handlers ─────────────────────────────────────────────────
+
+    @app.errorhandler(OperationalError)
+    @app.errorhandler(DatabaseError)
+    def handle_db_error(e):
+        """Postgres is down -> clean 503 instead of ugly 500."""
+        return jsonify({
+            "error": "Service temporarily unavailable",
+            "detail": "Database connection failed. Please retry in a moment.",
+            "status": 503
+        }), 503
+
+    @app.errorhandler(404)
+    def handle_404(e):
+        return jsonify({"error": "Not found", "status": 404}), 404
+
+    @app.errorhandler(410)
+    def handle_410(e):
+        return jsonify({"error": "Gone - this link has been deactivated", "status": 410}), 410
+
+    @app.errorhandler(500)
+    def handle_500(e):
+        return jsonify({
+            "error": "Internal server error",
+            "detail": str(e),
+            "status": 500
+        }), 500
 
     return app
