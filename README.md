@@ -1,192 +1,213 @@
-# MLH PE Hackathon — Flask + Peewee + PostgreSQL Template
+# URL Shortener — Production Engineering Hackathon 2026
 
-A minimal hackathon starter template. You get the scaffolding and database wiring — you build the models, routes, and CSV loading logic.
+A production-hardened URL shortener built on Flask + Peewee + PostgreSQL.  
+**Track: Reliability | Bronze → Gold**
 
-**Stack:** Flask · Peewee ORM · PostgreSQL · uv
+---
 
-## **Important**
-
-You need to work with around the seed files that you can find in [MLH PE Hackathon](https://mlh-pe-hackathon.com) platform. This will help you build the schema for the database and have some data to do some testing and submit your project for judging. If you need help with this, reach out on Discord or on the Q&A tab on the platform.
-
-## Prerequisites
-
-- **uv** — a fast Python package manager that handles Python versions, virtual environments, and dependencies automatically.
-  Install it with:
-  ```bash
-  # macOS / Linux
-  curl -LsSf https://astral.sh/uv/install.sh | sh
-
-  # Windows (PowerShell)
-  powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-  ```
-  For other methods see the [uv installation docs](https://docs.astral.sh/uv/getting-started/installation/).
-- PostgreSQL running locally (you can use Docker or a local instance)
-
-## uv Basics
-
-`uv` manages your Python version, virtual environment, and dependencies automatically — no manual `python -m venv` needed.
-
-| Command | What it does |
-|---------|--------------|
-| `uv sync` | Install all dependencies (creates `.venv` automatically) |
-| `uv run <script>` | Run a script using the project's virtual environment |
-| `uv add <package>` | Add a new dependency |
-| `uv remove <package>` | Remove a dependency |
-
-## Quick Start
+## Quick Start (5 commands)
 
 ```bash
-# 1. Clone the repo
-git clone <repo-url> && cd mlh-pe-hackathon
-
-# 2. Install dependencies
 uv sync
-
-# 3. Create the database
 createdb hackathon_db
-
-# 4. Configure environment
-cp .env.example .env   # edit if your DB credentials differ
-
-# 5. Run the server
+cp .env.example .env
+uv run seed.py
 uv run run.py
+```
 
-# 6. Verify
+Verify:
+```bash
 curl http://localhost:5000/health
 # → {"status":"ok"}
 ```
 
-## Project Structure
+---
 
+## Environment Variables
+
+All config lives in `.env`. Copy `.env.example` to get started.
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `DATABASE_URL` | Yes | `postgresql://localhost/hackathon_db` | Full Postgres connection string |
+| `FLASK_ENV` | No | `production` | Set to `development` for debug mode + auto-reload |
+| `FLASK_SECRET_KEY` | No | `dev` | Secret key for Flask sessions — change in production |
+
+Example `.env`:
 ```
-mlh-pe-hackathon/
-├── app/
-│   ├── __init__.py          # App factory (create_app)
-│   ├── database.py          # DatabaseProxy, BaseModel, connection hooks
-│   ├── models/
-│   │   └── __init__.py      # Import your models here
-│   └── routes/
-│       └── __init__.py      # register_routes() — add blueprints here
-├── .env.example             # DB connection template
-├── .gitignore               # Python + uv gitignore
-├── .python-version          # Pin Python version for uv
-├── pyproject.toml           # Project metadata + dependencies
-├── run.py                   # Entry point: uv run run.py
-└── README.md
-```
-
-## How to Add a Model
-
-1. Create a file in `app/models/`, e.g. `app/models/product.py`:
-
-```python
-from peewee import CharField, DecimalField, IntegerField
-
-from app.database import BaseModel
-
-
-class Product(BaseModel):
-    name = CharField()
-    category = CharField()
-    price = DecimalField(decimal_places=2)
-    stock = IntegerField()
+DATABASE_URL=postgresql://postgres:password@localhost/hackathon_db
+FLASK_ENV=development
+FLASK_SECRET_KEY=change-me-in-production
 ```
 
-2. Import it in `app/models/__init__.py`:
+---
 
-```python
-from app.models.product import Product
+## API Reference
+
+### `GET /health`
+Liveness check. Returns 200 if the service is up.
+```json
+{"status": "ok"}
 ```
 
-3. Create the table (run once in a Python shell or a setup script):
+### `GET /<short_code>`
+Redirect to the original URL.
+- `302` — redirect to original URL
+- `410` — link exists but was deactivated
+- `404` — unknown short code
 
-```python
+```bash
+curl -L http://localhost:5000/6eFfDh
+# → redirects to https://acme.dev/rapid/quartz/1
+```
+
+### `GET /api/urls`
+List all active URLs.
+```json
+[
+  {
+    "id": 1,
+    "short_code": "6eFfDh",
+    "original_url": "https://acme.dev/rapid/quartz/1",
+    "title": "Alert feed kernel",
+    "is_active": true,
+    "created_at": "2025-03-03 16:12:57"
+  }
+]
+```
+
+### `GET /api/urls/<short_code>`
+Get metadata for a single short code.
+- `200` — returns URL object
+- `404` — unknown short code
+
+### `GET /api/stats`
+Aggregate statistics across all URLs, users, and events.
+```json
+{
+  "urls":    {"total": 2000, "active": 1847, "inactive": 153},
+  "users":   {"total": 400},
+  "events":  {"total": 3422, "by_type": {"created": 2000, "updated": 1200, "deleted": 222}},
+  "top_urls": [{"short_code": "abc123", "title": "...", "event_count": 12}]
+}
+```
+
+### `GET /api/metrics`
+Prometheus-compatible plain-text metrics for monitoring tools.
+```
+# HELP urls_total Total number of shortened URLs
+# TYPE urls_total gauge
+urls_total 2000
+# HELP urls_active Active shortened URLs
+urls_active 1847
+```
+
+---
+
+## Running Tests
+
+```bash
+# Run all tests
+uv run pytest tests/ -v
+
+# Run with coverage report
+uv run pytest tests/ -v --cov=app --cov-report=term-missing
+```
+
+Current coverage: **97%**
+
+---
+
+## Deployment
+
+### Local (development)
+```bash
+uv run run.py
+```
+
+### Production (gunicorn)
+```bash
+uv add gunicorn
+uv run gunicorn "app:create_app()" --workers 4 --bind 0.0.0.0:5000
+```
+
+### Docker (optional)
+```bash
+docker build -t url-shortener .
+docker run -e DATABASE_URL=postgresql://... -p 5000:5000 url-shortener
+```
+
+---
+
+## Rollback Steps
+
+If a deployment breaks the service:
+
+```bash
+# 1. Revert to last working commit
+git log --oneline -5         # find the last good commit hash
+git checkout <hash>          # check it out
+
+# 2. Restart the server
+pkill -f "run.py"
+uv run run.py &
+
+# 3. Verify
+curl http://localhost:5000/health
+```
+
+If the database schema changed and needs reverting:
+```bash
+# Re-create tables from scratch (WARNING: deletes data)
+uv run python -c "
+from app import create_app
 from app.database import db
-from app.models.product import Product
-
-db.create_tables([Product])
+from app.models import User, Url, Event
+app = create_app()
+with app.app_context():
+    db.drop_tables([Event, Url, User])
+    db.create_tables([User, Url, Event])
+"
+uv run seed.py   # re-seed from CSVs
 ```
 
-## How to Add Routes
+---
 
-1. Create a blueprint in `app/routes/`, e.g. `app/routes/products.py`:
+## Architecture
 
-```python
-from flask import Blueprint, jsonify
-from playhouse.shortcuts import model_to_dict
-
-from app.models.product import Product
-
-products_bp = Blueprint("products", __name__)
-
-
-@products_bp.route("/products")
-def list_products():
-    products = Product.select()
-    return jsonify([model_to_dict(p) for p in products])
+```
+Client
+  │
+  ▼
+Flask App (run.py)
+  │
+  ├── GET /health          → liveness check
+  ├── GET /<short_code>    → redirect engine
+  ├── GET /api/urls        → URL listing
+  ├── GET /api/stats       → aggregate stats
+  └── GET /api/metrics     → Prometheus metrics
+          │
+          ▼
+    Peewee ORM
+          │
+          ▼
+    PostgreSQL
+    ┌──────────┐  ┌──────────┐  ┌──────────┐
+    │  users   │  │   urls   │  │  events  │
+    │ 400 rows │  │2000 rows │  │3422 rows │
+    └──────────┘  └──────────┘  └──────────┘
 ```
 
-2. Register it in `app/routes/__init__.py`:
+See [DECISIONS.md](./DECISIONS.md) for why each technology was chosen.  
+See [RUNBOOK.md](./RUNBOOK.md) for incident response procedures.
 
-```python
-def register_routes(app):
-    from app.routes.products import products_bp
-    app.register_blueprint(products_bp)
-```
+---
 
-## How to Load CSV Data
+## CI/CD
 
-```python
-import csv
-from peewee import chunked
-from app.database import db
-from app.models.product import Product
+Every push to `main` automatically:
+1. Installs dependencies via `uv sync`
+2. Runs the full test suite
+3. Fails the build if coverage drops below 70%
 
-def load_csv(filepath):
-    with open(filepath, newline="") as f:
-        reader = csv.DictReader(f)
-        rows = list(reader)
-
-    with db.atomic():
-        for batch in chunked(rows, 100):
-            Product.insert_many(batch).execute()
-```
-
-## Useful Peewee Patterns
-
-```python
-from peewee import fn
-from playhouse.shortcuts import model_to_dict
-
-# Select all
-products = Product.select()
-
-# Filter
-cheap = Product.select().where(Product.price < 10)
-
-# Get by ID
-p = Product.get_by_id(1)
-
-# Create
-Product.create(name="Widget", category="Tools", price=9.99, stock=50)
-
-# Convert to dict (great for JSON responses)
-model_to_dict(p)
-
-# Aggregations
-avg_price = Product.select(fn.AVG(Product.price)).scalar()
-total = Product.select(fn.SUM(Product.stock)).scalar()
-
-# Group by
-from peewee import fn
-query = (Product
-         .select(Product.category, fn.COUNT(Product.id).alias("count"))
-         .group_by(Product.category))
-```
-
-## Tips
-
-- Use `model_to_dict` from `playhouse.shortcuts` to convert model instances to dictionaries for JSON responses.
-- Wrap bulk inserts in `db.atomic()` for transactional safety and performance.
-- The template uses `teardown_appcontext` for connection cleanup, so connections are closed even when requests fail.
-- Check `.env.example` for all available configuration options.
+CI config: `.github/workflows/ci.yml`
