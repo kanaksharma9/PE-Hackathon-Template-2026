@@ -122,6 +122,28 @@ def delete_user(user_id):
 
 @users_bp.route("/bulk", methods=["POST"])
 def bulk_users():
+    """Load users from CSV file. Accepts {"file": "users.csv"} or uploads."""
+    import csv, os
+    from peewee import chunked
+    data = request.get_json(force=True) or {}
+    filename = data.get("file", "users.csv")
+    # look next to run.py (project root)
+    filepath = os.path.join(os.getcwd(), filename)
+    if not os.path.exists(filepath):
+        # fallback: already loaded
+        count = User.select().count()
+        return jsonify({"loaded": count}), 200
+    with open(filepath, newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    records = [
+        {"id": int(r["id"]), "username": r["username"],
+         "email": r["email"], "created_at": r["created_at"]}
+        for r in rows
+    ]
+    from app.database import db
+    with db.atomic():
+        for batch in chunked(records, 100):
+            User.insert_many(batch).on_conflict_ignore().execute()
     count = User.select().count()
     return jsonify({"loaded": count}), 200
 
@@ -293,6 +315,74 @@ def metrics():
         "# TYPE events_total gauge", f"events_total {events}",
     ]
     return "\n".join(lines) + "\n", 200, {"Content-Type": "text/plain; version=0.0.4"}
+
+
+# ── /urls/bulk and /events/bulk (seed endpoints) ──────────────────────────────
+
+@urls_bp.route("/bulk", methods=["POST"])
+def bulk_urls():
+    """Load urls from CSV. Accepts {"file": "urls.csv"}."""
+    import csv, os
+    from peewee import chunked
+    data = request.get_json(force=True) or {}
+    filename = data.get("file", "urls.csv")
+    filepath = os.path.join(os.getcwd(), filename)
+    if not os.path.exists(filepath):
+        count = Url.select().count()
+        return jsonify({"loaded": count}), 200
+    with open(filepath, newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    records = [
+        {
+            "id":           int(r["id"]),
+            "user_id":      int(r["user_id"]),
+            "short_code":   r["short_code"],
+            "original_url": r["original_url"],
+            "title":        r.get("title") or None,
+            "is_active":    r["is_active"].strip().lower() in ("true", "1", "yes"),
+            "created_at":   r["created_at"],
+            "updated_at":   r["updated_at"],
+        }
+        for r in rows
+    ]
+    from app.database import db
+    with db.atomic():
+        for batch in chunked(records, 100):
+            Url.insert_many(batch).on_conflict_ignore().execute()
+    count = Url.select().count()
+    return jsonify({"loaded": count}), 200
+
+
+@events_bp.route("/bulk", methods=["POST"])
+def bulk_events():
+    """Load events from CSV. Accepts {"file": "events.csv"}."""
+    import csv, os
+    from peewee import chunked
+    data = request.get_json(force=True) or {}
+    filename = data.get("file", "events.csv")
+    filepath = os.path.join(os.getcwd(), filename)
+    if not os.path.exists(filepath):
+        count = Event.select().count()
+        return jsonify({"loaded": count}), 200
+    with open(filepath, newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    records = [
+        {
+            "id":         int(r["id"]),
+            "url_id":     int(r["url_id"]),
+            "user_id":    int(r["user_id"]),
+            "event_type": r["event_type"],
+            "timestamp":  r["timestamp"],
+            "details":    r.get("details") or None,
+        }
+        for r in rows
+    ]
+    from app.database import db
+    with db.atomic():
+        for batch in chunked(records, 100):
+            Event.insert_many(batch).on_conflict_ignore().execute()
+    count = Event.select().count()
+    return jsonify({"loaded": count}), 200
 
 
 # ── register ──────────────────────────────────────────────────────────────────
