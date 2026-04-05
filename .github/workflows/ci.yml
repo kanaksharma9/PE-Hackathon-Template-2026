@@ -10,6 +10,24 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: hackathon_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/hackathon_db
+
     steps:
       - uses: actions/checkout@v4
 
@@ -21,10 +39,6 @@ jobs:
 
       - name: Run tests with coverage
         run: uv run pytest tests/ -v --cov=app --cov-report=term-missing --cov-fail-under=70
-
-      - name: Upload coverage summary
-        if: always()
-        run: uv run pytest tests/ --cov=app --cov-report=term-missing > coverage.txt 2>&1 || true
 
       - uses: actions/upload-artifact@v4
         if: always()

@@ -1,3 +1,11 @@
+"""
+Reliability test suite — Bronze + Silver + Gold tier.
+
+Run with:
+    uv run pytest tests/ -v
+    uv run pytest tests/ -v --cov=app --cov-report=term-missing
+"""
+
 import pytest
 from app import create_app
 from app.database import db
@@ -200,4 +208,122 @@ class TestEvents:
 
     def test_create_event(self, client):
         r = client.post("/events", json={"url_id": 1, "user_id": 1, "event_type": "updated"})
+        assert r.status_code == 201
+
+
+# ── Extra coverage: bulk routes ───────────────────────────────────────────────
+
+class TestBulkRoutes:
+    def test_bulk_users_no_file_returns_200(self, client):
+        """When CSV not present, returns count of existing users."""
+        r = client.post("/users/bulk", json={"file": "nonexistent.csv"})
+        assert r.status_code == 200
+        assert "loaded" in r.get_json()
+
+    def test_bulk_urls_no_file_returns_200(self, client):
+        r = client.post("/urls/bulk", json={"file": "nonexistent.csv"})
+        assert r.status_code == 200
+        assert "loaded" in r.get_json()
+
+    def test_bulk_events_no_file_returns_200(self, client):
+        r = client.post("/events/bulk", json={"file": "nonexistent.csv"})
+        assert r.status_code == 200
+        assert "loaded" in r.get_json()
+
+
+# ── Extra coverage: URL CRUD ──────────────────────────────────────────────────
+
+class TestUrlCrud:
+    def test_create_url(self, client):
+        r = client.post("/urls", json={"original_url": "https://test.com", "title": "Test"})
+        assert r.status_code == 201
+        data = r.get_json()
+        assert data["original_url"] == "https://test.com"
+        assert "short_code" in data
+
+    def test_create_url_missing_field(self, client):
+        r = client.post("/urls", json={"title": "no url"})
+        assert r.status_code == 400
+
+    def test_update_url(self, client):
+        r = client.patch("/urls/1", json={"title": "Updated title"})
+        assert r.status_code == 200
+        assert r.get_json()["title"] == "Updated title"
+
+    def test_update_url_missing(self, client):
+        r = client.patch("/urls/99999", json={"title": "x"})
+        assert r.status_code == 404
+
+    def test_delete_url(self, client):
+        # create one first so we don't break other tests
+        created = client.post("/urls", json={"original_url": "https://delete-me.com"}).get_json()
+        r = client.delete(f"/urls/{created['id']}")
+        assert r.status_code == 200
+        assert r.get_json()["deleted"] is True
+
+    def test_delete_url_missing(self, client):
+        r = client.delete("/urls/99999")
+        assert r.status_code == 404
+
+
+# ── Extra coverage: User CRUD ─────────────────────────────────────────────────
+
+class TestUserCrud:
+    def test_update_user(self, client):
+        r = client.patch("/users/1", json={"username": "updated_user"})
+        assert r.status_code == 200
+        assert r.get_json()["username"] == "updated_user"
+
+    def test_update_user_missing(self, client):
+        r = client.patch("/users/99999", json={"username": "x"})
+        assert r.status_code == 404
+
+    def test_delete_user(self, client):
+        created = client.post("/users", json={
+            "username": "todelete", "email": "todelete@example.com"
+        }).get_json()
+        r = client.delete(f"/users/{created['id']}")
+        assert r.status_code == 200
+        assert r.get_json()["deleted"] is True
+
+    def test_delete_user_missing(self, client):
+        r = client.delete("/users/99999")
+        assert r.status_code == 404
+
+    def test_create_duplicate_email(self, client):
+        client.post("/users", json={"username": "dupuser", "email": "dup@example.com"})
+        r = client.post("/users", json={"username": "dupuser2", "email": "dup@example.com"})
+        assert r.status_code == 409
+
+
+# ── Extra coverage: Events CRUD ───────────────────────────────────────────────
+
+class TestEventCrud:
+    def test_get_event_by_id(self, client):
+        r = client.get("/events/1")
+        assert r.status_code == 200
+        assert "event_type" in r.get_json()
+
+    def test_get_event_missing(self, client):
+        r = client.get("/events/99999")
+        assert r.status_code == 404
+
+    def test_filter_events_by_url(self, client):
+        r = client.get("/events?url_id=1")
+        assert r.status_code == 200
+
+    def test_filter_events_by_user(self, client):
+        r = client.get("/events?user_id=1")
+        assert r.status_code == 200
+
+    def test_create_event_missing_fields(self, client):
+        r = client.post("/events", json={"event_type": "created"})
+        assert r.status_code == 400
+
+    def test_create_event_with_dict_details(self, client):
+        r = client.post("/events", json={
+            "url_id": 1, "user_id": 1,
+            "event_type": "updated",
+            "details": {"key": "value"}
+        })
         assert r.status_code == 201
